@@ -198,3 +198,184 @@ display(datasets["price-tiers.csv"])
 
 # Display all genres and their game counts
 display(datasets["genres.csv"])
+
+# ============================================
+# STEP 5: CLEAN AND EXPORT STEAM DATASETS
+# ============================================
+
+import pandas as pd
+import io
+import os
+import zipfile
+
+from google.colab import files
+
+# Upload the five original CSV files
+uploaded = files.upload()
+
+# Expected filenames
+expected_files = [
+    "genres.csv",
+    "ownership-concentration.csv",
+    "price-tiers.csv",
+    "pricing-by-year.csv",
+    "review-by-genre.csv"
+]
+
+# Check that all five files are uploaded
+missing_files = [
+    name for name in expected_files
+    if name not in uploaded
+]
+
+if missing_files:
+    raise ValueError(
+        f"Missing files: {missing_files}"
+    )
+
+# Define expected numeric columns
+numeric_columns = {
+    "genres.csv": ["games"],
+
+    "ownership-concentration.csv": [
+        "owner_share"
+    ],
+
+    "price-tiers.csv": ["games"],
+
+    "pricing-by-year.csv": [
+        "release_year",
+        "titles",
+        "free_share",
+        "median_price_usd",
+        "mean_price_usd"
+    ],
+
+    "review-by-genre.csv": [
+        "titles",
+        "median_review_score",
+        "free_share"
+    ]
+}
+
+# Integer columns
+integer_columns = {
+    "genres.csv": ["games"],
+    "price-tiers.csv": ["games"],
+    "pricing-by-year.csv": [
+        "release_year", "titles"
+    ],
+    "review-by-genre.csv": ["titles"]
+}
+
+# Create output folder in Colab
+output_folder = "/content/steam_cleaned"
+
+os.makedirs(output_folder, exist_ok=True)
+
+cleaned_datasets = {}
+
+# Clean each dataset
+for filename in expected_files:
+
+    print(f"\nProcessing: {filename}")
+
+    df = pd.read_csv(
+        io.BytesIO(uploaded[filename])
+    )
+
+    original_rows = len(df)
+
+    # Standardise column names
+    df.columns = [
+        col.strip().lower()
+        for col in df.columns
+    ]
+
+    # Remove unwanted spaces from text fields
+    for col in df.select_dtypes(
+        include=["object", "string"]
+    ).columns:
+
+        df[col] = df[col].str.strip()
+
+    # Convert numeric columns
+    for col in numeric_columns[filename]:
+
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="raise"
+        )
+
+    # Ensure integer columns are integers
+    for col in integer_columns.get(filename, []):
+
+        if not df[col].mod(1).eq(0).all():
+            raise ValueError(
+                f"Non-integer values found in {col}"
+            )
+
+        df[col] = df[col].astype("int64")
+
+    # Validate percentages and ratios
+    for col in [
+        c for c in df.columns
+        if c in [
+            "owner_share",
+            "free_share",
+            "median_review_score"
+        ]
+    ]:
+
+        if not df[col].between(0, 1).all():
+            raise ValueError(
+                f"Invalid ratio detected in {filename}: {col}"
+            )
+
+    # Preserve records: do not delete automatically
+    if df.isnull().sum().sum() > 0:
+        raise ValueError(
+            f"Missing values detected in {filename}"
+        )
+
+    if df.duplicated().sum() > 0:
+        raise ValueError(
+            f"Duplicate rows detected in {filename}"
+        )
+
+    # Save cleaned CSV
+    output_path = os.path.join(
+        output_folder,
+        filename
+    )
+
+    df.to_csv(
+        output_path,
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    cleaned_datasets[filename] = df
+
+    print("Original rows:", original_rows)
+    print("Cleaned rows:", len(df))
+    print("Exported:", filename)
+
+print("\nALL FIVE DATASETS EXPORTED SUCCESSFULLY!")
+
+# Package the five files into one ZIP
+zip_path = "/content/Steam_Cleaned_Datasets.zip"
+
+with zipfile.ZipFile(
+    zip_path, "w", zipfile.ZIP_DEFLATED
+) as zip_file:
+
+    for filename in expected_files:
+
+        zip_file.write(
+            os.path.join(output_folder, filename),
+            arcname=filename
+        )
+
+# Download ZIP
+files.download(zip_path)
